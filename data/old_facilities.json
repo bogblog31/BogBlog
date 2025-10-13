@@ -1,0 +1,11 @@
+[
+  {
+    "id": "101",
+    "name": "Old Wembley",
+    "country": "UK",
+    "lat": 51.556,
+    "lng": -0.2796,
+    "sport": "Football",
+    "description": "Original Wembley Stadium (demolished 2002)"
+  }
+]

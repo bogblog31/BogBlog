@@ -1,0 +1,27 @@
+html, body, #map {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+#floorSelector {
+  background: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+  font-family: sans-serif;
+  font-size: 14px;
+}
+
+.popup-gallery img {
+  width: 80px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 6px;
+  margin: 4px;
+  cursor: pointer;
+}
+
+.section-block {
+  margin-bottom: 10px;
+}
