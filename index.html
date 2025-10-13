@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Global Sports Facilities Map</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Global Sports Facilities Map — Expandable Popups</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -15,15 +15,7 @@
 <body>
   <div id="map"></div>
 
-  <!-- Floor Selector Overlay -->
-  <div id="floorSelector" class="leaflet-top leaflet-right leaflet-control">
-    <label for="floorDropdown">Floor:</label>
-    <select id="floorDropdown">
-      <option value="all">All Floors</option>
-    </select>
-  </div>
-
-  <!-- JS Libraries -->
+  <!-- JS: Leaflet + Lightbox + main script -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/js/lightbox.min.js"></script>
   <script src="script.js"></script>
