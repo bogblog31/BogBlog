@@ -15,14 +15,28 @@ const OLD_IMG_PATH = 'data/old_images.json';
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
 
-// Prevent clicks inside popups from closing them
+// prevent popup clicks from propagating to the map ---
 map.on('popupopen', function(e) {
   const popupEl = e.popup.getElement();
-  if (popupEl) {
-    L.DomEvent.disableClickPropagation(popupEl);
-    L.DomEvent.disableScrollPropagation(popupEl);
-  }
+  if (!popupEl) return;
+
+  // disable propagation and map closing behavior
+  L.DomEvent.disableClickPropagation(popupEl);
+  L.DomEvent.disableScrollPropagation(popupEl);
+
+  // also explicitly stop propagation for mouse and pointer events
+  popupEl.addEventListener('mousedown', stopPopupClick, true);
+  popupEl.addEventListener('mouseup', stopPopupClick, true);
+  popupEl.addEventListener('click', stopPopupClick, true);
+  popupEl.addEventListener('dblclick', stopPopupClick, true);
+  popupEl.addEventListener('contextmenu', stopPopupClick, true);
+  popupEl.addEventListener('pointerdown', stopPopupClick, true);
+  popupEl.addEventListener('pointerup', stopPopupClick, true);
 });
+
+function stopPopupClick(e) {
+  e.stopPropagation();
+}
 
 // OpenStrretMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -325,6 +339,7 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
 
 
 
