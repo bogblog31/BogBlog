@@ -14,6 +14,7 @@ const OLD_IMG_PATH = 'data/old_images.json';
  * Map initialization
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
+
 // Prevent clicks inside popups from closing them
 map.on('popupopen', function(e) {
   const popupEl = e.popup.getElement();
@@ -22,6 +23,7 @@ map.on('popupopen', function(e) {
     L.DomEvent.disableScrollPropagation(popupEl);
   }
 });
+
 // OpenStrretMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors'
@@ -334,5 +336,6 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
 
 
