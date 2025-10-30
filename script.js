@@ -20,7 +20,7 @@ function stopPopupClick(e) {
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
 
-// === Install capture-phase document listeners (pre-existing, retained) ===
+// --- Robust: block any map clicks that originate inside a popup ---
 // This listens in the capture phase and stops the event before Leaflet's map handlers run.
 (function installPopupIsolation() {
   // helper to check if event came from inside a popup
@@ -52,25 +52,58 @@ const map = L.map('map').setView([20, 0], 2);
     return false;
   }
 
+  // helper to detect if the event target (or any ancestor in path) is an interactive element
+  function eventTargetsInteractiveElement(e) {
+    const path = (e.composedPath && e.composedPath()) || (e.path || []);
+    if (path && path.length) {
+      for (const node of path) {
+        if (!node || !node.tagName) continue;
+        const tag = node.tagName.toUpperCase();
+        if (tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        if (node.hasAttribute && (node.hasAttribute('data-lightbox') || node.getAttribute('role') === 'button')) return true;
+        // clickable elements sometimes have onclick or pointer cursor; check those heuristics
+        if (node.getAttribute && node.getAttribute('onclick')) return true;
+      }
+    } else {
+      // fallback: walk up DOM from target
+      let n = e.target;
+      while (n) {
+        if (n.tagName) {
+          const tag = n.tagName.toUpperCase();
+          if (tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+          if (n.hasAttribute && (n.hasAttribute('data-lightbox') || n.getAttribute('role') === 'button')) return true;
+          if (n.getAttribute && n.getAttribute('onclick')) return true;
+        }
+        n = n.parentElement;
+      }
+    }
+    return false;
+  }
+
   // Events to intercept (capture phase)
   const events = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'];
 
   events.forEach(evName => {
     document.addEventListener(evName, function(e) {
       try {
-        if (eventFromPopup(e)) {
-          // allow the element (link/button) to do its default action,
-          // but prevent the event from reaching Leaflet/map handlers.
-          e.stopPropagation();
-          // do NOT call preventDefault() here because we want clickable anchors/buttons to still work.
+        // only act if the event came from inside a popup
+        if (!eventFromPopup(e)) return;
+
+        // If the event targets an interactive element (link/button/lightbox), DO NOT stop it —
+        // allow the lightbox or link click handlers to receive it.
+        if (eventTargetsInteractiveElement(e)) {
+          return;
         }
+
+        // Otherwise stop propagation so Leaflet/map handlers don't treat it as a map click
+        e.stopPropagation();
+        // Do NOT call preventDefault() — we don't want to block normal browser defaults.
       } catch (err) {
         // silently ignore
       }
     }, true); // IMPORTANT: capture = true
   });
 })();
-
 
 // OpenStreetMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -425,3 +458,4 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
