@@ -1,4 +1,4 @@
-w/**************************************************
+/**************************************************
  * CONFIG — replace these with your published CSV links
  **************************************************/
 const FACILITIES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTkCSuWf7Rr2NpPRuHto4Y-RcWrTZbZMCvb15v3pdag-HK5WHy7jBtytswR93tAwgdBe_DqCLC5hx8e/pub?gid=0&single=true&output=csv';
@@ -14,7 +14,14 @@ const OLD_IMG_PATH = 'data/old_images.json';
  * Map initialization
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
-
+// Prevent clicks inside popups from closing them
+map.on('popupopen', function(e) {
+  const popupEl = e.popup.getElement();
+  if (popupEl) {
+    L.DomEvent.disableClickPropagation(popupEl);
+    L.DomEvent.disableScrollPropagation(popupEl);
+  }
+});
 // OpenStrretMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors'
@@ -305,7 +312,6 @@ function buildExpandablePopups(facilities, sections, images) {
     map.setView([lat, lng], 18, { animate: true });
   };
 }
-
 // Coordinate popup
 var popup = L.popup();
 
@@ -328,11 +334,4 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
-
-
-
-
-
-
-
 
