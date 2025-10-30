@@ -20,7 +20,7 @@ function stopPopupClick(e) {
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
 
-// --- Robust: block any map clicks that originate inside a popup ---
+// === Install capture-phase document listeners (pre-existing, retained) ===
 // This listens in the capture phase and stops the event before Leaflet's map handlers run.
 (function installPopupIsolation() {
   // helper to check if event came from inside a popup
@@ -72,10 +72,62 @@ const map = L.map('map').setView([20, 0], 2);
 })();
 
 
-// OpenStrretMap
+// OpenStreetMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors'
 }).addTo(map);
+
+/**************************************************
+ * ===== NEW: Popup-level isolation (attach on popupopen, remove on popupclose)
+ *
+ * This ensures that clicks inside the popup never bubble to the map.
+ **************************************************/
+(function installPopupElementIsolation() {
+  // events we'll attach to the popup element itself
+  const popupEvents = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'];
+
+  // on popupopen, attach handlers directly on the popup element (capture phase)
+  map.on('popupopen', function(e) {
+    const popupEl = e.popup && e.popup.getElement && e.popup.getElement();
+    if (!popupEl) return;
+
+    // Use Leaflet helpers too (defensive)
+    try {
+      L.DomEvent.disableClickPropagation(popupEl);
+      L.DomEvent.disableScrollPropagation(popupEl);
+    } catch (err) { /* ignore */ }
+
+    // mark element so we can avoid double-adding
+    if (popupEl.__popupIsolationInstalled) return;
+    popupEl.__popupIsolationInstalled = true;
+
+    // attach listeners in capture phase to stop propagation before Leaflet map handlers
+    popupEl.__popupStopHandler = function(ev) {
+      // allow default (so links and buttons still work)
+      ev.stopPropagation();
+      // do not call preventDefault(); that would stop anchors from navigating if they should
+    };
+
+    popupEvents.forEach(evt => {
+      popupEl.addEventListener(evt, popupEl.__popupStopHandler, true); // capture = true
+    });
+  });
+
+  // on popupclose, remove attached handlers to avoid memory leaks
+  map.on('popupclose', function(e) {
+    const popupEl = e.popup && e.popup.getElement && e.popup.getElement();
+    if (!popupEl) return;
+    if (!popupEl.__popupIsolationInstalled) return;
+
+    const handler = popupEl.__popupStopHandler;
+    if (handler) {
+      ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'].forEach(evt => {
+        try { popupEl.removeEventListener(evt, handler, true); } catch (err) { /* ignore */ }
+      });
+    }
+    try { delete popupEl.__popupStopHandler; delete popupEl.__popupIsolationInstalled; } catch (err) {}
+  });
+})();
 
 /**************************************************
  * Robust CSV parser (handles quoted fields)
@@ -373,8 +425,3 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
-
-
-
-
-
