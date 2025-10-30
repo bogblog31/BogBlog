@@ -10,33 +10,67 @@ const OLD_FAC_PATH = 'data/old_facilities.json';
 const OLD_SEC_PATH = 'data/old_sections.json';
 const OLD_IMG_PATH = 'data/old_images.json';
 
+// --- Robust: block any map clicks that originate inside a popup ---
+function stopPopupClick(e) {
+  e.stopPropagation();
+}
+
 /**************************************************
  * Map initialization
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
 
-// prevent popup clicks from propagating to the map ---
-map.on('popupopen', function(e) {
-  const popupEl = e.popup.getElement();
-  if (!popupEl) return;
+// --- Robust: block any map clicks that originate inside a popup ---
+// This listens in the capture phase and stops the event before Leaflet's map handlers run.
+(function installPopupIsolation() {
+  // helper to check if event came from inside a popup
+  function eventFromPopup(e) {
+    // use composedPath() when available (covers shadow DOM too)
+    const path = (e.composedPath && e.composedPath()) || (e.path || []);
+    if (path && path.length) {
+      for (const node of path) {
+        if (!node || !node.classList) continue;
+        // Leaflet popup wrapper/content classes to check
+        if (node.classList.contains('leaflet-popup') ||
+            node.classList.contains('leaflet-popup-content') ||
+            node.classList.contains('leaflet-popup-content-wrapper')) {
+          return true;
+        }
+      }
+    } else {
+      // fallback: walk up DOM from target
+      let n = e.target;
+      while (n) {
+        if (n.classList && (n.classList.contains('leaflet-popup') ||
+                            n.classList.contains('leaflet-popup-content') ||
+                            n.classList.contains('leaflet-popup-content-wrapper'))) {
+          return true;
+        }
+        n = n.parentElement;
+      }
+    }
+    return false;
+  }
 
-  // disable propagation and map closing behavior
-  L.DomEvent.disableClickPropagation(popupEl);
-  L.DomEvent.disableScrollPropagation(popupEl);
+  // Events to intercept (capture phase)
+  const events = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'];
 
-  // also explicitly stop propagation for mouse and pointer events
-  popupEl.addEventListener('mousedown', stopPopupClick, true);
-  popupEl.addEventListener('mouseup', stopPopupClick, true);
-  popupEl.addEventListener('click', stopPopupClick, true);
-  popupEl.addEventListener('dblclick', stopPopupClick, true);
-  popupEl.addEventListener('contextmenu', stopPopupClick, true);
-  popupEl.addEventListener('pointerdown', stopPopupClick, true);
-  popupEl.addEventListener('pointerup', stopPopupClick, true);
-});
+  events.forEach(evName => {
+    document.addEventListener(evName, function(e) {
+      try {
+        if (eventFromPopup(e)) {
+          // allow the element (link/button) to do its default action,
+          // but prevent the event from reaching Leaflet/map handlers.
+          e.stopPropagation();
+          // do NOT call preventDefault() here because we want clickable anchors/buttons to still work.
+        }
+      } catch (err) {
+        // silently ignore
+      }
+    }, true); // IMPORTANT: capture = true
+  });
+})();
 
-function stopPopupClick(e) {
-  e.stopPropagation();
-}
 
 // OpenStrretMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -339,6 +373,7 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
 
 
 
