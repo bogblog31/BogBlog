@@ -322,8 +322,6 @@ function onMapClick(e) {
         .openOn(map);
 }
 
-map.on('click', onMapClick);
-
 /**************************************************
  * Small helpers
  **************************************************/
@@ -334,4 +332,5 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
 
