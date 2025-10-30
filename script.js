@@ -20,90 +20,101 @@ function stopPopupClick(e) {
  **************************************************/
 const map = L.map('map').setView([20, 0], 2);
 
-// Prevent map clicks from firing when interacting with popup content
-map.on('popupopen', function (e) {
-  const popupEl = e.popup.getElement();
-  if (!popupEl) return;
+// === Reliable popup-local isolation that still allows links/lightbox ===
+// Attach per-popup capture-phase handler that blocks map handlers but allows interactive elements.
+(function installPopupLocalIsolation() {
+  // Helper: decide if node (or its ancestor path) is interactive
+  function isInteractiveNode(node) {
+    if (!node) return false;
+    // tag test
+    const tag = (node.tagName || '').toUpperCase();
+    if (tag === 'A' || tag === 'BUTTON' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    // data-lightbox used by Lightbox2
+    if (node.hasAttribute && (node.hasAttribute('data-lightbox') || node.getAttribute('role') === 'button')) return true;
+    // onclick inline heuristics
+    if (node.getAttribute && node.getAttribute('onclick')) return true;
+    // cursor style might indicate clickability
+    try {
+      const style = node && node.style && node.style.cursor;
+      if (style && /pointer/.test(String(style))) return true;
+    } catch (err) { /* ignore */ }
+    return false;
+  }
 
-  // Stop click and mouseup from bubbling to the map
-  popupEl.addEventListener('click', function (ev) {
-    // Let normal <a> links and clickable elements work as expected
-    const target = ev.target.closest('a, button, .section-link');
-    if (target) {
-      ev.stopPropagation(); // prevent map click
-      return; // allow default behavior (e.g., href, onclick)
+  // For an event, check whether any element in the composed path is interactive
+  function pathHasInteractiveTarget(e) {
+    const path = (e.composedPath && e.composedPath()) || (e.path || []);
+    if (path && path.length) {
+      for (const n of path) {
+        if (!n || !n.nodeType) continue;
+        if (isInteractiveNode(n)) return true;
+      }
+    } else {
+      // fallback: walk up from target
+      let n = e.target;
+      while (n) {
+        if (isInteractiveNode(n)) return true;
+        n = n.parentElement;
+      }
     }
+    return false;
+  }
 
-    // For other clicks, just prevent them from closing popup or opening new ones
-    ev.preventDefault();
-    ev.stopPropagation();
+  // Events we'll intercept on popup element (capture phase)
+  const eventsToIntercept = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'];
+
+  map.on('popupopen', function (ev) {
+    const popupEl = ev.popup && ev.popup.getElement && ev.popup.getElement();
+    if (!popupEl) return;
+
+    // if already installed for this popup element, skip
+    if (popupEl.__isolationInstalled) return;
+    popupEl.__isolationInstalled = true;
+
+    // Handler runs in capture phase on the popup element.
+    // It allows events if they target interactive elements (so links and Lightbox still work),
+    // otherwise it stops propagation so the map doesn't react.
+    popupEl.__isolationHandler = function (e) {
+      try {
+        // If the event's composed path contains an interactive element (link, button, data-lightbox), allow it.
+        if (pathHasInteractiveTarget(e)) {
+          // Let this event continue to the target (do not stopPropagation)
+          return;
+        }
+        // Otherwise block it from reaching the map and other global listeners.
+        e.stopPropagation();
+        // Do not call preventDefault() — we want default actions (if any) to still work where applicable.
+      } catch (err) {
+        // swallow errors silently
+      }
+    };
+
+    // Attach handlers on popupEl in capture phase so they run before Leaflet's own handlers.
+    eventsToIntercept.forEach(evt => popupEl.addEventListener(evt, popupEl.__isolationHandler, true));
+    // Also call Leaflet helper defensively
+    try { L.DomEvent.disableClickPropagation(popupEl); L.DomEvent.disableScrollPropagation(popupEl); } catch (e) {}
   });
 
-  popupEl.addEventListener('mousedown', function (ev) {
-    ev.stopPropagation();
-  });
+  map.on('popupclose', function (ev) {
+    const popupEl = ev.popup && ev.popup.getElement && ev.popup.getElement();
+    if (!popupEl) return;
+    if (!popupEl.__isolationInstalled) return;
 
-  popupEl.addEventListener('mouseup', function (ev) {
-    ev.stopPropagation();
+    const handler = popupEl.__isolationHandler;
+    if (handler) {
+      eventsToIntercept.forEach(evt => {
+        try { popupEl.removeEventListener(evt, handler, true); } catch (err) {}
+      });
+    }
+    try { delete popupEl.__isolationHandler; delete popupEl.__isolationInstalled; } catch (err) {}
   });
-});
+})();
+
 
 // OpenStreetMap
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '© OpenStreetMap contributors'
 }).addTo(map);
-
-/**************************************************
- * ===== NEW: Popup-level isolation (attach on popupopen, remove on popupclose)
- *
- * This ensures that clicks inside the popup never bubble to the map.
- **************************************************/
-(function installPopupElementIsolation() {
-  // events we'll attach to the popup element itself
-  const popupEvents = ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'];
-
-  // on popupopen, attach handlers directly on the popup element (capture phase)
-  map.on('popupopen', function(e) {
-    const popupEl = e.popup && e.popup.getElement && e.popup.getElement();
-    if (!popupEl) return;
-
-    // Use Leaflet helpers too (defensive)
-    try {
-      L.DomEvent.disableClickPropagation(popupEl);
-      L.DomEvent.disableScrollPropagation(popupEl);
-    } catch (err) { /* ignore */ }
-
-    // mark element so we can avoid double-adding
-    if (popupEl.__popupIsolationInstalled) return;
-    popupEl.__popupIsolationInstalled = true;
-
-    // attach listeners in capture phase to stop propagation before Leaflet map handlers
-    popupEl.__popupStopHandler = function(ev) {
-      // allow default (so links and buttons still work)
-      ev.stopPropagation();
-      // do not call preventDefault(); that would stop anchors from navigating if they should
-    };
-
-    popupEvents.forEach(evt => {
-      popupEl.addEventListener(evt, popupEl.__popupStopHandler, true); // capture = true
-    });
-  });
-
-  // on popupclose, remove attached handlers to avoid memory leaks
-  map.on('popupclose', function(e) {
-    const popupEl = e.popup && e.popup.getElement && e.popup.getElement();
-    if (!popupEl) return;
-    if (!popupEl.__popupIsolationInstalled) return;
-
-    const handler = popupEl.__popupStopHandler;
-    if (handler) {
-      ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','contextmenu','touchstart','touchend'].forEach(evt => {
-        try { popupEl.removeEventListener(evt, handler, true); } catch (err) { /* ignore */ }
-      });
-    }
-    try { delete popupEl.__popupStopHandler; delete popupEl.__popupIsolationInstalled; } catch (err) {}
-  });
-})();
 
 /**************************************************
  * Robust CSV parser (handles quoted fields)
@@ -401,5 +412,6 @@ function sanitizeHTML(str) {
 function escapeId(s) { return String(s).replace(/[^a-z0-9_\-]/gi, '_'); }
 function escapeJS(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"'); }
 function unescapeJS(s) { return String(s).replace(/\\'/g,"'").replace(/\\"/g,'"').replace(/\\\\/g,'\\'); }
+
 
 
