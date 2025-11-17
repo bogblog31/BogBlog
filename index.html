@@ -219,11 +219,8 @@ function handleMapFeatureClick(feature) {
     return;
   }
 
-  // fly to feature
-  if(feature.geometry && feature.geometry.coordinates) {
-    map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
-  } else if(feature.properties && feature.properties.longitude && feature.properties.latitude) {
-    map.flyTo({ center:[parseFloat(feature.properties.longitude), parseFloat(feature.properties.latitude)], zoom:16 });
+  // Fly to feature
+  map.flyTo({ center: coords, zoom: 16 });
 
   // Build popup
   const container = createFacilityPopupContent(feature);
@@ -233,7 +230,6 @@ function handleMapFeatureClick(feature) {
     .setDOMContent(container)
     .addTo(map);
 }
-
 
 map.on('load', async () => {
   const data = await loadData();
@@ -598,6 +594,7 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
 
 
