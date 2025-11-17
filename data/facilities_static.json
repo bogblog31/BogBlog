@@ -1,0 +1,12 @@
+[
+  {
+    "facility_id": 3,
+    "facility": "catcat",
+    "country": "United Kingdom",
+    "lat": 51.5259739,
+    "lng": -0.1340195,
+    "amenity": "Football",
+    "description": "hello world",
+    "address": "183 Euston Rd., London NW1 2BE, United Kingdom"
+  }
+]
