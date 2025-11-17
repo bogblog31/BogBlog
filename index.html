@@ -63,15 +63,6 @@
   </div>
   
 <script>
-
-  /* ======================================================================
-   Debug-script dupe 2025/11/16
-   ====================================================================== */
-  if (window.__MAP_INIT_RAN__) {
-  console.error("SCRIPT LOADED TWICE!");
-  throw new Error("Script executed twice");
-}
-window.__MAP_INIT_RAN__ = true;
   
 /* ======================================================================
    CONFIG — update these names as needed
@@ -542,4 +533,5 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
