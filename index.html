@@ -32,7 +32,7 @@
 </head>
 <body>
   <div class="sidebar">
-    <h2>Bog Blog v0.3</h2>
+    <h2>Bog Blog v0.4</h2>
 
     <div class="search">
       <input id="searchInput" type="search" placeholder="Search facility, address or section" />
@@ -136,7 +136,7 @@ async function loadData(){
 /* ======================================================================
    Build GeoJSON features: facility contains its sections (with images)
    ====================================================================== */
-function buildFeatureCollection({facilities, sections, images}){
+function buildFeatureCollection({facilities, sections, images}) {
   const sectionsByFacility = {};
   sections.forEach(s => {
     const fid = String(s.facility_id || s.facility || s.id || s.FacilityID || s.facilityId || '').trim();
@@ -189,6 +189,22 @@ const map = new maplibregl.Map({
   center: [0,20], zoom:2
 });
 
+// centralized handler to open popup + flyTo
+function handleMapFeatureClick(feature) {
+  if(!feature) return;
+  // close previous popup
+  if(currentPopup) { try{ currentPopup.remove(); }catch(e){} currentPopup = null; }
+  // fly to feature
+  if(feature.geometry && feature.geometry.coordinates) {
+    map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
+  } else if(feature.properties && feature.properties.longitude && feature.properties.latitude) {
+    map.flyTo({ center:[parseFloat(feature.properties.longitude), parseFloat(feature.properties.latitude)], zoom:16 });
+  }
+  // build popup content and show it
+  const container = createFacilityPopupContent(feature);
+  currentPopup = new maplibregl.Popup().setLngLat(feature.geometry.coordinates).setDOMContent(container).addTo(map);
+}
+
 map.on('load', async () => {
   const data = await loadData();
   const geojson = buildFeatureCollection(data);
@@ -202,17 +218,24 @@ map.on('load', async () => {
   buildFacilityFilters(data.facilities, data.sections, data.images);
   setupPropertyToggles({facilities:data.facilities, sections:data.sections, images:data.images});
 
-  // click handler with single-popup behavior
+  // click handlers on both layers
   map.on('click','toilet-points', e => {
     const feature = e.features && e.features[0];
-    if(!feature) return;
-    // close previous popup
-    if(currentPopup) { try{ currentPopup.remove(); }catch(e){} currentPopup = null; }
-    map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
-    // create popup and store it
-    const container = createFacilityPopupContent(feature);
-    const popup = new maplibregl.Popup().setLngLat(feature.geometry.coordinates).setDOMContent(container).addTo(map);
-    currentPopup = popup;
+    handleMapFeatureClick(feature);
+  });
+  map.on('click','toilet-labels', e => {
+    const feature = e.features && e.features[0];
+    handleMapFeatureClick(feature);
+  });
+
+  // fallback: if user clicks and event didn't capture layer feature (rare), query rendered features at point
+  map.on('click', (e) => {
+    // if e.features exists and had a feature we already handled; otherwise try queryRenderedFeatures
+    // query both layers so clicks on label or circle will be found
+    const hits = map.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
+    if(hits && hits.length) {
+      handleMapFeatureClick(hits[0]);
+    }
   });
 
   map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
@@ -509,4 +532,3 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
-
