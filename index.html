@@ -211,9 +211,45 @@ map.on('load', async () => {
   const geojson = buildFeatureCollection(data);
   window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
 
-  map.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
-  map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
-  map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
+  // --- SAFE SOURCE ADDITION ---
+if (!map.getSource('toilets')) {
+  map.addSource('toilets', {
+    type: 'geojson',
+    data: geojson,
+    cluster: false
+  });
+} else {
+  // source already exists → just update it
+  map.getSource('toilets').setData(geojson);
+}
+
+// --- SAFE LAYER ADDITION ---
+if (!map.getLayer('toilet-points')) {
+  map.addLayer({
+    id: 'toilet-points',
+    type: 'circle',
+    source: 'toilets',
+    paint: {
+      'circle-radius': 6,
+      'circle-color': '#1f78b4',
+      'circle-stroke-width': 1
+    }
+  });
+}
+
+if (!map.getLayer('toilet-labels')) {
+  map.addLayer({
+    id: 'toilet-labels',
+    type: 'symbol',
+    source: 'toilets',
+    layout: {
+      'text-field': ['get', 'facility'],
+      'text-offset': [0, 1.2],
+      'text-size': 12
+    }
+  });
+}
+
 
   buildFacilityList(geojson.features);
   buildFacilityFilters(data.facilities, data.sections, data.images);
@@ -533,5 +569,6 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
 
