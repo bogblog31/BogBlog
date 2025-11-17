@@ -234,7 +234,7 @@ function buildFeatureCollection({ facilities, sections, images }) {
 }
 
 /* ======================================================================
-   Initialize MapLibre map
+   Initialize MapLibre map (use appMap variable to avoid collisions)
    ====================================================================== */
 let currentPopup = null;
 const appMap = new maplibregl.Map({
@@ -269,6 +269,7 @@ function handleMapFeatureClick(feature) {
   else if (feature._geometry && feature._geometry.coordinates) coords = feature._geometry.coordinates;
   else if (feature.properties && feature.properties.lng && feature.properties.lat) coords = [parseFloat(feature.properties.lng), parseFloat(feature.properties.lat)];
   else if (feature.properties && feature.properties.longitude && feature.properties.latitude) coords = [parseFloat(feature.properties.longitude), parseFloat(feature.properties.latitude)];
+  else if (feature.properties && feature.properties.lat && feature.properties.lng) coords = [parseFloat(feature.properties.lng), parseFloat(feature.properties.lat)];
 
   if (!coords) {
     console.warn('No coordinates for feature', feature);
@@ -280,8 +281,6 @@ function handleMapFeatureClick(feature) {
 
   // Build popup content and show it
   const container = createFacilityPopupContent(feature);
-  // debug: ensure non-empty container
-  // console.log('popup container html', container && container.innerHTML);
 
   currentPopup = new maplibregl.Popup()
     .setLngLat(coords)
@@ -298,15 +297,15 @@ appMap.on('load', async () => {
     const geojson = buildFeatureCollection(data);
     window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
 
-    // SAFE source add/update
-    if (appMap.getSource('toilets')) {
+    // SAFE source add/update (correct ordering)
+    if (!appMap.getSource('toilets')) {
       appMap.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
     } else {
       appMap.getSource('toilets').setData(geojson);
     }
 
     // SAFE layer add
-    if (appMap.getLayer('toilet-points')) {
+    if (!appMap.getLayer('toilet-points')) {
       appMap.addLayer({
         id: 'toilet-points',
         type: 'circle',
@@ -319,7 +318,7 @@ appMap.on('load', async () => {
       });
     }
 
-    if (appMap.getLayer('toilet-labels')) {
+    if (!appMap.getLayer('toilet-labels')) {
       appMap.addLayer({
         id: 'toilet-labels',
         type: 'symbol',
@@ -351,12 +350,13 @@ appMap.on('load', async () => {
 
     // fallback: query features at click point
     appMap.on('click', (e) => {
-      const hits = map.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
+      const hits = appMap.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
       if (hits && hits.length) handleMapFeatureClick(hits[0]);
     });
 
-    appMap.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
-    appMap.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
+    // cursor helpers
+    appMap.on('mouseenter','toilet-points', ()=> appMap.getCanvas().style.cursor='pointer');
+    appMap.on('mouseleave','toilet-points', ()=> appMap.getCanvas().style.cursor='');
 
   } catch(err) {
     console.error('Boot failed', err);
@@ -451,7 +451,7 @@ function applyFilters(){
     return true;
   });
   const fc = { type:'FeatureCollection', features: filtered };
-  if(map.getSource('toilets')) map.getSource('toilets').setData(fc);
+  if(appMap.getSource('toilets')) appMap.getSource('toilets').setData(fc);
   buildFacilityList(filtered);
 }
 
@@ -631,31 +631,12 @@ document.getElementById('closeModal').addEventListener('click', ()=>{ document.g
 /* ======================================================================
    Helpers
    ====================================================================== */
-function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;","<":"&lt;",">":"&gt;"}[c])); }
-
-/* ======================================================================
-   Boot: initial load and UI hookup (keeps idempotence)
-   ====================================================================== */
-(async function(){
-  try{
-    const dataRaw = await loadData();
-    const geojson = buildFeatureCollection(dataRaw);
-    window.__MAP_DATA = { raw: geojson, facilities: dataRaw.facilities, sections: dataRaw.sections, images: dataRaw.images };
-
-    if(map.getSource('toilets')) map.getSource('toilets').setData(geojson);
-    else appMap.addSource('toilets', { type:'geojson', data: geojson });
-
-    if(!map.getLayer('toilet-points')) appMap.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
-    if(!map.getLayer('toilet-labels')) map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility_name'] , 'text-offset':[0,1.2], 'text-size':12 } });
-
-    buildFacilityList(geojson.features);
-    buildFacilityFilters(dataRaw.facilities, dataRaw.sections, dataRaw.images);
-    setupPropertyToggles({facilities:dataRaw.facilities, sections:dataRaw.sections, images:dataRaw.images});
-  } catch(err){ console.error('Boot failed', err); document.getElementById('facilityList').textContent='Failed to load data. Check console.'; }
-})();
+function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;",'<':'&lt;','>':'&gt;'}[c])); }
 </script>
+
 </body>
 </html>
+
 
 
 
