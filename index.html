@@ -192,19 +192,48 @@ const map = new maplibregl.Map({
 
 // centralized handler to open popup + flyTo
 function handleMapFeatureClick(feature) {
-  if(!feature) return;
-  // close previous popup
-  if(currentPopup) { try{ currentPopup.remove(); }catch(e){} currentPopup = null; }
+  if (!feature) return;
+
+  // Close previous popup
+  if (currentPopup) {
+    try { currentPopup.remove(); } catch (e) {}
+    currentPopup = null;
+  }
+
+  // FIX: Normalize geometry (MapLibre sometimes stores it internally)
+  let coords = null;
+
+  if (feature.geometry && feature.geometry.coordinates) {
+    coords = feature.geometry.coordinates;
+  } else if (feature._geometry && feature._geometry.coordinates) {
+    coords = feature._geometry.coordinates;
+  } else if (feature.properties.longitude && feature.properties.latitude) {
+    coords = [
+      parseFloat(feature.properties.longitude),
+      parseFloat(feature.properties.latitude)
+    ];
+  }
+
+  if (!coords) {
+    console.warn("No coordinates found for feature:", feature);
+    return;
+  }
+
   // fly to feature
   if(feature.geometry && feature.geometry.coordinates) {
     map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
   } else if(feature.properties && feature.properties.longitude && feature.properties.latitude) {
     map.flyTo({ center:[parseFloat(feature.properties.longitude), parseFloat(feature.properties.latitude)], zoom:16 });
-  }
-  // build popup content and show it
+
+  // Build popup
   const container = createFacilityPopupContent(feature);
-  currentPopup = new maplibregl.Popup().setLngLat(feature.geometry.coordinates).setDOMContent(container).addTo(map);
+
+  currentPopup = new maplibregl.Popup()
+    .setLngLat(coords)
+    .setDOMContent(container)
+    .addTo(map);
 }
+
 
 map.on('load', async () => {
   const data = await loadData();
@@ -569,6 +598,7 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
 
 
