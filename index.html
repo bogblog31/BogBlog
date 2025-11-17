@@ -299,14 +299,14 @@ appMap.on('load', async () => {
     window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
 
     // SAFE source add/update
-    if (!map.getSource('toilets')) {
+    if (appMap.getSource('toilets')) {
       appMap.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
     } else {
       appMap.getSource('toilets').setData(geojson);
     }
 
     // SAFE layer add
-    if (!map.getLayer('toilet-points')) {
+    if (appMap.getLayer('toilet-points')) {
       appMap.addLayer({
         id: 'toilet-points',
         type: 'circle',
@@ -319,7 +319,7 @@ appMap.on('load', async () => {
       });
     }
 
-    if (!map.getLayer('toilet-labels')) {
+    if (appMap.getLayer('toilet-labels')) {
       appMap.addLayer({
         id: 'toilet-labels',
         type: 'symbol',
@@ -656,6 +656,7 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
 
 
