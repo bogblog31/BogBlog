@@ -26,11 +26,14 @@
     select,input[type=search]{width:100%;padding:8px;margin-bottom:8px;box-sizing:border-box}
     button{cursor:pointer;padding:8px 10px}
     .small { font-size:90%; color:#555 }
+    .collapsible { cursor:pointer; padding:8px 6px; margin-bottom:6px; background:#eef2f5; border-radius:4px; }
+    .toggle-list { padding:6px 0 12px 0; }
   </style>
 </head>
 <body>
   <div class="sidebar">
     <h2>Bog Blog</h2>
+
     <div class="search">
       <input id="searchInput" type="search" placeholder="Search facility, address or section" />
     </div>
@@ -41,13 +44,19 @@
       <button id="clearFilters">Clear filters</button>
     </div>
 
+    <div class="collapsible" id="propToggleBtn">Property visibility ▾</div>
+    <div id="propertyToggles" class="toggle-list" style="display:none">
+      <!-- checkboxes get injected here after data loads -->
+      <div class="small">Toggle which facility-level properties appear in the popup.</div>
+    </div>
+
     <div>
       <strong>Facilities</strong>
       <div id="facilityList">Loading facilities...</div>
     </div>
-<hr />
-</div>
-    
+    <hr />
+  </div>
+
   <div id="map"></div>
 
   <div id="modal" class="modal">
@@ -60,18 +69,13 @@
 <script>
 /* ======================================================================
    CONFIG — update these names as needed
-* - Replace SHEET_ID with your spreadsheet ID
-* - Replace FACILITIES_SHEET, SECTIONS_SHEET and IMAGES_SHEET with the exact sheet names
-* NOTES: You can adjust parsing logic below to match your exact column names.
-Static files expected at <code>/data/facilities_static.json</code>, <code>/data/sections_static.json</code>, <code>/data/images_static.json</code>
-Dynamic sheets are fetched from Google Sheets via gviz JSON (public or anyone-with-link).
-You can add new columns to sections — they will appear automatically in the section detail view.
    ====================================================================== */
 const CONFIG = {
   SHEET_ID: '147YVLFKhpk7s0gtxBVb9w55icdTh3VRpsNpEP3ojesY',
-  FACILITIES_SHEET: 'BogBlog ML GL JS - Facilities',
-  SECTIONS_SHEET: 'BogBlog ML GL JS - Sections',
-  IMAGES_SHEET: 'BogBlog ML GL JS - Images',
+  // use the actual sheet TAB NAMES you confirmed
+  FACILITIES_SHEET: 'Facilities',
+  SECTIONS_SHEET: 'Sections',
+  IMAGES_SHEET: 'Images',
   // static JSON file paths (Option A)
   STATIC: {
     facilities: './data/facilities_static.json',
@@ -89,7 +93,11 @@ async function fetchSheet(sheetName){
     const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq?tqx=out:json${sheetParam}`;
     const res = await fetch(url);
     const text = await res.text();
-    const jsonText = text.replace(/^.*?setResponse\(|\);\s*$/g, '');
+    // extract JSON object from google's wrapper robustly
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if(start === -1 || end === -1) throw new Error('Unexpected Google response format');
+    const jsonText = text.slice(start, end + 1);
     const gv = JSON.parse(jsonText);
     return gvizToObjects(gv);
   }catch(e){
@@ -146,7 +154,7 @@ async function loadData(){
 function buildFeatureCollection({facilities, sections, images}){
   const sectionsByFacility = {};
   sections.forEach(s => {
-    const fid = String(s.facility_id || s.facility || s.id || s.facilityId || '').trim();
+    const fid = String(s.facility_id || s.facility || s.id || s.FacilityID || s.facilityId || '').trim();
     if(!fid) return;
     sectionsByFacility[fid] = sectionsByFacility[fid] || [];
     // copy section and collect images later
@@ -155,24 +163,24 @@ function buildFeatureCollection({facilities, sections, images}){
 
   const imagesByFacilitySection = {};
   images.forEach(img => {
-    const fid = String(img.facility_id || img.facility || img.id || img.facilityId || '').trim();
-    const sec = String(img.section_name || img.section || img.section_name || img.sectionName || 'default');
+    const fid = String(img.facility_id || img.facility || img.id || img.FacilityID || img.facilityId || '').trim();
+    const sec = String(img.section_name || img.section || img.SectionName || img.sectionName || 'default');
     if(!fid) return;
     imagesByFacilitySection[fid] = imagesByFacilitySection[fid] || {};
     imagesByFacilitySection[fid][sec] = imagesByFacilitySection[fid][sec] || [];
-    if(img.image_url) imagesByFacilitySection[fid][sec].push(img.image_url);
+    if(img.image_url || img.URL) imagesByFacilitySection[fid][sec].push(img.image_url || img.URL);
   });
 
   const features = [];
   facilities.forEach(f => {
-    const fid = String(f.facility_id || f.id || f.Facility || f.facility || '').trim();
-    const lat = parseFloat(f.lat || f.latitude || f.Lat || f.Latitude || f.lat_lng && f.lat_lng.split(',')[0]);
-    const lng = parseFloat(f.lng || f.lon || f.longitude || f.Lon || (f.lat_lng && f.lat_lng.split(',')[1]));
+    const fid = String(f.facility_id || f.id || f.FacilityID || f.Facility || f.facility || '').trim();
+    const lat = parseFloat(f.lat || f.latitude || f.Lat || f.Latitude || f.Latitude_dd || (f.lat_lng && f.lat_lng.split(',')[0]));
+    const lng = parseFloat(f.lng || f.lon || f.longitude || f.Lon || f.Longitude || (f.lat_lng && f.lat_lng.split(',')[1]));
     if(Number.isNaN(lat) || Number.isNaN(lng)) return; // skip invalid
 
     // attach sections with images and their properties
     const secs = (sectionsByFacility[fid] || []).map(s => {
-      const secName = s.section_name || s.section || s.sectionName || 'default';
+      const secName = s.section_name || s.section || s.sectionName || s.SectionName || 'default';
       const secCopy = Object.assign({}, s);
       secCopy.images = imagesByFacilitySection[fid] && imagesByFacilitySection[fid][secName] ? imagesByFacilitySection[fid][secName] : [];
       return secCopy;
@@ -194,12 +202,13 @@ function buildFeatureCollection({facilities, sections, images}){
 }
 
 /* ======================================================================
-   Initialize map
+   Initialize map (glyphs added to satisfy MapLibre text-field)
    ====================================================================== */
 const map = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
+    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: { 'osm-tiles': { type: 'raster', tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256 } },
     layers: [{ id:'osm-tiles', type:'raster', source:'osm-tiles' }]
   },
@@ -219,13 +228,20 @@ map.on('load', async () => {
     id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 }
   });
 
+  // label layer uses glyphs above
   map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
 
+  // set UI with loaded data
   buildFacilityList(geojson.features);
   buildFacilityFilters(data.facilities);
+  setupPropertyToggles(data.facilities); // -> builds checkboxes for property visibility
 
+  // click handler: zoom + show popup (same as clicking from sidebar)
   map.on('click','toilet-points', e => {
     const feature = e.features[0];
+    if(!feature) return;
+    // zoom to and show popup
+    map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
     showFacilityPopup(feature);
   });
   map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
@@ -239,7 +255,7 @@ function buildFacilityList(features){
   const list = document.getElementById('facilityList'); list.innerHTML = '';
   features.forEach(f => {
     const d = document.createElement('div'); d.className='facility-item';
-    const name = f.properties.facility || f.properties.Facility || 'Unnamed';
+    const name = f.properties.facility || f.properties.Facility || f.properties.FacilityName || 'Unnamed';
     const addr = f.properties.address || f.properties.Address || '';
     d.innerHTML = `<strong>${escapeHtml(name)}</strong><div class="small">${escapeHtml(addr)}</div>`;
     d.addEventListener('click', ()=>{ map.flyTo({ center: f.geometry.coordinates, zoom:16 }); showFacilityPopup(f); });
@@ -254,7 +270,7 @@ function buildFacilityFilters(facilities){
 
   // decide which columns to expose as filters: pick string columns except id/coords
   const sample = facilities[0];
-  const exclude = new Set(['facility_id','id','lat','lng','lat_lng','latitude','longitude']);
+  const exclude = new Set(['facility_id','id','lat','lng','lat_lng','latitude','longitude','FacilityID','Latitude','Longitude']);
   const keys = Object.keys(sample).filter(k => !exclude.has(k));
 
   keys.forEach(k => {
@@ -311,23 +327,65 @@ document.getElementById('searchInput').addEventListener('input', e => {
 });
 
 /* ======================================================================
-   Popup & modal: facility popup lists properties and sections
+   Property visibility toggles
+   ====================================================================== */
+const DEFAULT_VISIBLE = ['amenity','floor','access','type','description','image_taken'];
+
+function setupPropertyToggles(facilities){
+  const container = document.getElementById('propertyToggles');
+  container.innerHTML = '';
+  if(!facilities || !facilities.length){ container.innerHTML = '<div class="small">(no properties found)</div>'; return; }
+
+  // determine candidate property keys from facilities dataset (exclude obvious technical columns)
+  const exclude = new Set(['facility_id','id','lat','lng','lat_lng','latitude','longitude','FacilityID','Latitude','Longitude','facility','Facility','address','Address','sections']);
+  const sample = facilities[0];
+  const keys = Object.keys(sample).filter(k => !exclude.has(k));
+
+  // build checkboxes (default checked if in DEFAULT_VISIBLE, case-insensitive)
+  const lowerDefaults = DEFAULT_VISIBLE.map(s => s.toLowerCase());
+  keys.forEach(k => {
+    const id = 'prop_' + k.replace(/[^a-z0-9_\-]/gi,'_');
+    const checked = lowerDefaults.includes(k.toLowerCase()) ? 'checked' : '';
+    const div = document.createElement('div');
+    div.innerHTML = `<input type="checkbox" id="${id}" data-prop="${escapeHtml(k)}" ${checked}><label for="${id}">${escapeHtml(k)}</label>`;
+    container.appendChild(div);
+  });
+
+  // show/hide toggle behavior
+  const btn = document.getElementById('propToggleBtn');
+  btn.addEventListener('click', () => {
+    const el = document.getElementById('propertyToggles');
+    el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+  });
+}
+
+function getVisibleProperties(){
+  const checks = Array.from(document.querySelectorAll('#propertyToggles input[type=checkbox]'));
+  if(!checks.length) return []; // nothing toggled
+  return checks.filter(c => c.checked).map(c => c.dataset.prop);
+}
+
+/* ======================================================================
+   Popup & modal: facility popup lists selected properties and sections
    Section modal shows section properties, description, and gallery
    ====================================================================== */
 function showFacilityPopup(feature){
   const props = feature.properties || {};
-  const facilityName = props.facility || props.Facility || 'Unnamed';
+  const facilityName = props.facility || props.Facility || props.FacilityName || 'Unnamed';
   const addr = props.address || '';
+
+  const visibleProps = getVisibleProperties();
 
   const container = document.createElement('div');
   let html = '';
   html += `<strong>${escapeHtml(facilityName)}</strong>`;
   if(addr) html += `<div class="small">${escapeHtml(addr)}</div>`;
 
-  // properties table: list all facility-level columns except sections
+  // properties table: list all facility-level columns except sections, but only those toggled visible
   html += `<table class="props">`;
   Object.keys(props).forEach(k => {
-    if(['lat','lng','latitude','longitude','lat_lng','sections','facility_id'].includes(k)) return;
+    if(['lat','lng','latitude','longitude','lat_lng','sections','facility_id','FacilityID'].includes(k)) return;
+    if(visibleProps.length && visibleProps.indexOf(k) === -1) return; // skip if not visible
     const v = props[k];
     if(v===null || v===undefined || v==='') return;
     // if property is an array (e.g., tags) stringify
@@ -366,18 +424,18 @@ function openSectionModal(facilityId, sectionName){
   const modal = document.getElementById('modal');
   const body = document.getElementById('modalBody');
   const data = window.__MAP_DATA;
-  const facility = data.facilities.find(f => String(f.facility_id||f.id||f.facility||f.Facility) === String(facilityId));
-  const section = data.sections.find(s => String(s.facility_id||s.facility||s.id) === String(facilityId) && String(s.section_name||s.section||s.sectionName) === String(sectionName));
+  const facility = data.facilities.find(f => String(f.facility_id||f.id||f.FacilityID||f.facility||f.Facility) === String(facilityId));
+  const section = data.sections.find(s => String(s.facility_id||s.facility||s.id||s.SectionID) === String(facilityId) && String(s.section_name||s.section||s.sectionName||s.SectionName) === String(sectionName));
 
   let html = '';
   html += `<h3>${escapeHtml(sectionName)}</h3>`;
-  if(section && section.description) html += `<p>${escapeHtml(section.description)}</p>`;
+  if(section && (section.description || section.Description)) html += `<p>${escapeHtml(section.description || section.Description)}</p>`;
 
   // Show section properties table (all columns except facility_id and section_name)
   if(section){
     html += `<table class="props">`;
     Object.keys(section).forEach(k => {
-      if(['facility_id','section_name','section','id','image_url'].includes(k)) return;
+      if(['facility_id','section_name','section','id','image_url','SectionID'].includes(k)) return;
       const v = section[k];
       if(v===null||v===undefined||v==='') return;
       html += `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`;
@@ -386,7 +444,7 @@ function openSectionModal(facilityId, sectionName){
   }
 
   // images (gather images from images dataset by facility+section)
-  const imgs = data.images.filter(i => String(i.facility_id||i.facility||i.id) === String(facilityId) && String(i.section_name||i.section||i.sectionName||'') === String(sectionName)).map(i=>i.image_url).filter(Boolean);
+  const imgs = data.images.filter(i => String(i.facility_id||i.facility||i.id||i.FacilityID) === String(facilityId) && String(i.section_name||i.section||i.sectionName||i.SectionName||'') === String(sectionName)).map(i=>i.image_url || i.URL).filter(Boolean);
   if(imgs.length){
     html += `<div class="gallery">`;
     imgs.forEach(u => { html += `<img src="${escapeHtml(u)}" alt=""/>`; });
@@ -407,12 +465,39 @@ document.getElementById('closeModal').addEventListener('click', ()=>{ document.g
 function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;",'<':'&lt;','>':'&gt;'}[c])); }
 
 /* ======================================================================
-   End of file
+   Boot
    ====================================================================== */
+(async function(){
+  try{
+    // load static + dynamic and render map features/UI
+    const dataRaw = await loadData();
+    const geojson = buildFeatureCollection(dataRaw);
+
+    // store for UI usage
+    window.__MAP_DATA = { raw: geojson, facilities: dataRaw.facilities, sections: dataRaw.sections, images: dataRaw.images };
+
+    // set source (if not already present)
+    if(map.getSource('toilets')) map.getSource('toilets').setData(geojson);
+    else map.addSource('toilets', { type:'geojson', data: geojson });
+
+    // ensure layers exist (they may have been added in map.on('load'))
+    if(!map.getLayer('toilet-points')) {
+      map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
+    }
+    if(!map.getLayer('toilet-labels')) {
+      map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
+    }
+
+    // build UI (in case not built earlier)
+    buildFacilityList(geojson.features);
+    buildFacilityFilters(dataRaw.facilities);
+    setupPropertyToggles(dataRaw.facilities);
+
+  } catch(err){
+    console.error('Boot failed', err);
+    document.getElementById('facilityList').textContent = 'Failed to load data. Check console for errors.';
+  }
+})();
 </script>
 </body>
 </html>
-
-
-
-
