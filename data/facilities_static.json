@@ -1,7 +1,7 @@
 [
   {
     "facility_id": 100,
-    "facility": "catcat",
+    "facility_name": "catcat",
     "country": "United Kingdom",
     "lat": 51.5259739,
     "lng": -0.1340195,
