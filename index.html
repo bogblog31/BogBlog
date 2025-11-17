@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Toilet Map — MapLibre Starter (Option A)</title>
+  <title>Bog Blog</title>
   <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
   <style>
@@ -46,16 +46,6 @@
       <div id="facilityList">Loading facilities...</div>
     </div>
 
-    <hr />
-    <div class="small">Notes:
-      <ul>
-        <li>Static files expected at <code>/data/facilities_static.json</code>, <code>/data/sections_static.json</code>, <code>/data/images_static.json</code></li>
-        <li>Dynamic sheets are fetched from Google Sheets via gviz JSON (public or anyone-with-link).</li>
-        <li>You can add new columns to sections — they will appear automatically in the section detail view.</li>
-      </ul>
-    </div>
-  </div>
-
   <div id="map"></div>
 
   <div id="modal" class="modal">
@@ -71,6 +61,9 @@
 * - Replace SHEET_ID with your spreadsheet ID
 * - Replace FACILITIES_SHEET, SECTIONS_SHEET and IMAGES_SHEET with the exact sheet names
 * NOTES: You can adjust parsing logic below to match your exact column names.
+Static files expected at <code>/data/facilities_static.json</code>, <code>/data/sections_static.json</code>, <code>/data/images_static.json</code>
+Dynamic sheets are fetched from Google Sheets via gviz JSON (public or anyone-with-link).
+You can add new columns to sections — they will appear automatically in the section detail view.
    ====================================================================== */
 const CONFIG = {
   SHEET_ID: '147YVLFKhpk7s0gtxBVb9w55icdTh3VRpsNpEP3ojesY',
@@ -417,4 +410,5 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
