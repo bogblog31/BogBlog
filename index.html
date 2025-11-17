@@ -237,7 +237,7 @@ function buildFeatureCollection({ facilities, sections, images }) {
    Initialize MapLibre map
    ====================================================================== */
 let currentPopup = null;
-const map = new maplibregl.Map({
+const appMap = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
@@ -276,7 +276,7 @@ function handleMapFeatureClick(feature) {
   }
 
   // Fly there
-  map.flyTo({ center: coords, zoom: 16 });
+  appMap.flyTo({ center: coords, zoom: 16 });
 
   // Build popup content and show it
   const container = createFacilityPopupContent(feature);
@@ -286,13 +286,13 @@ function handleMapFeatureClick(feature) {
   currentPopup = new maplibregl.Popup()
     .setLngLat(coords)
     .setDOMContent(container)
-    .addTo(map);
+    .addTo(appMap);
 }
 
 /* ======================================================================
    Map load: fetch data and add source/layers (idempotent)
    ====================================================================== */
-map.on('load', async () => {
+appMap.on('load', async () => {
   try {
     const data = await loadData();
     const geojson = buildFeatureCollection(data);
@@ -300,14 +300,14 @@ map.on('load', async () => {
 
     // SAFE source add/update
     if (!map.getSource('toilets')) {
-      map.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
+      appMap.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
     } else {
-      map.getSource('toilets').setData(geojson);
+      appMap.getSource('toilets').setData(geojson);
     }
 
     // SAFE layer add
     if (!map.getLayer('toilet-points')) {
-      map.addLayer({
+      appMap.addLayer({
         id: 'toilet-points',
         type: 'circle',
         source: 'toilets',
@@ -320,7 +320,7 @@ map.on('load', async () => {
     }
 
     if (!map.getLayer('toilet-labels')) {
-      map.addLayer({
+      appMap.addLayer({
         id: 'toilet-labels',
         type: 'symbol',
         source: 'toilets',
@@ -340,23 +340,23 @@ map.on('load', async () => {
     setupPropertyToggles({facilities:data.facilities, sections:data.sections, images:data.images});
 
     // click handlers (both layers)
-    map.on('click','toilet-points', e => {
+    appMap.on('click','toilet-points', e => {
       const feature = e.features && e.features[0];
       handleMapFeatureClick(feature);
     });
-    map.on('click','toilet-labels', e => {
+    appMap.on('click','toilet-labels', e => {
       const feature = e.features && e.features[0];
       handleMapFeatureClick(feature);
     });
 
     // fallback: query features at click point
-    map.on('click', (e) => {
+    appMap.on('click', (e) => {
       const hits = map.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
       if (hits && hits.length) handleMapFeatureClick(hits[0]);
     });
 
-    map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
-    map.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
+    appMap.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
+    appMap.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
 
   } catch(err) {
     console.error('Boot failed', err);
@@ -643,9 +643,9 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
     window.__MAP_DATA = { raw: geojson, facilities: dataRaw.facilities, sections: dataRaw.sections, images: dataRaw.images };
 
     if(map.getSource('toilets')) map.getSource('toilets').setData(geojson);
-    else map.addSource('toilets', { type:'geojson', data: geojson });
+    else appMap.addSource('toilets', { type:'geojson', data: geojson });
 
-    if(!map.getLayer('toilet-points')) map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
+    if(!map.getLayer('toilet-points')) appMap.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
     if(!map.getLayer('toilet-labels')) map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility_name'] , 'text-offset':[0,1.2], 'text-size':12 } });
 
     buildFacilityList(geojson.features);
@@ -656,5 +656,6 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
 
