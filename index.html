@@ -646,7 +646,7 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
     else map.addSource('toilets', { type:'geojson', data: geojson });
 
     if(!map.getLayer('toilet-points')) map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
-    if(!map.getLayer('toilet-labels')) map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
+    if(!map.getLayer('toilet-labels')) map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility_name'] , 'text-offset':[0,1.2], 'text-size':12 } });
 
     buildFacilityList(geojson.features);
     buildFacilityFilters(dataRaw.facilities, dataRaw.sections, dataRaw.images);
@@ -656,4 +656,5 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
+
 
