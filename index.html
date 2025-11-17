@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bog Blog</title>
+  <title>Bog Blog v0.6 (fixed)</title>
   <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
   <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
   <style>
@@ -15,7 +15,7 @@
     .facility-item { padding:8px; border-bottom:1px solid #eef2f5; cursor:pointer; }
     .facility-item:hover { background:#eef4fa; }
     .popup-sections a { display:block; margin:6px 0; color:#0066cc; cursor:pointer; text-decoration:underline; }
-    .modal { display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; }
+    .modal { display:none; position:fixed; z-index:99999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; }
     .modal .content { max-width:1000px; max-height:90%; background:#fff; padding:14px; overflow:auto; border-radius:6px; }
     .gallery img{ max-width:180px; margin:8px; border-radius:6px; }
     .close-btn { float:right; cursor:pointer; font-weight:bold; font-size:18px; }
@@ -28,6 +28,8 @@
     .small { font-size:90%; color:#555 }
     .collapsible { cursor:pointer; padding:8px 6px; margin-bottom:6px; background:#eef2f5; border-radius:4px; }
     .toggle-list { padding:6px 0 12px 0; }
+    /* ensure popups are above everything */
+    .maplibregl-popup { z-index: 999999 !important; }
   </style>
 </head>
 <body>
@@ -55,15 +57,14 @@
 
   <div id="map"></div>
 
-  <div id="modal" class="modal">
+  <div id="modal" class="modal" role="dialog" aria-modal="true">
     <div class="content">
-      <span id="closeModal" class="close-btn">✕</span>
+      <span id="closeModal" class="close-btn" role="button" aria-label="Close">✕</span>
       <div id="modalBody"></div>
     </div>
   </div>
-  
+
 <script>
-  
 /* ======================================================================
    CONFIG — update these names as needed
    ====================================================================== */
@@ -80,7 +81,7 @@ const CONFIG = {
 };
 
 /* ======================================================================
-   Utility: fetch Google Sheets (gviz) and parse to array of objects
+   Helpers: fetch Google Sheets (gviz) and parse to array of objects
    ====================================================================== */
 async function fetchSheet(sheetName){
   try{
@@ -135,64 +136,126 @@ async function loadData(){
 }
 
 /* ======================================================================
-   Build GeoJSON features: facility contains its sections (with images)
+   Build GeoJSON features (clean + consistent property names)
    ====================================================================== */
-function buildFeatureCollection({facilities, sections, images}) {
+function buildFeatureCollection({ facilities, sections, images }) {
+
+  /* ---- Normalize section lookup ---- */
   const sectionsByFacility = {};
   sections.forEach(s => {
-    const fid = String(s.facility_id || s.facility || s.id || s.FacilityID || s.facilityId || '').trim();
-    if(!fid) return;
-    sectionsByFacility[fid] = sectionsByFacility[fid] || [];
-    sectionsByFacility[fid].push(Object.assign({}, s));
+    const fid = String(
+      s.facility_id || s.facility || s.id || s.FacilityID
+    ).trim();
+    if (!fid) return;
+
+    if (!sectionsByFacility[fid]) sectionsByFacility[fid] = [];
+    sectionsByFacility[fid].push({ ...s });
   });
 
+  /* ---- Normalize images lookup (per facility + section) ---- */
   const imagesByFacilitySection = {};
   images.forEach(img => {
-    const fid = String(img.facility_id || img.facility || img.id || img.FacilityID || img.facilityId || '').trim();
-    const sec = String(img.section_name || img.section || img.SectionName || img.sectionName || 'default');
-    if(!fid) return;
-    imagesByFacilitySection[fid] = imagesByFacilitySection[fid] || {};
-    imagesByFacilitySection[fid][sec] = imagesByFacilitySection[fid][sec] || [];
-    if(img.image_url || img.URL) imagesByFacilitySection[fid][sec].push(img.image_url || img.URL);
+    const fid = String(
+      img.facility_id || img.facility || img.FacilityID
+    ).trim();
+    if (!fid) return;
+
+    const sec = String(
+      img.section_name || img.section || img.SectionName || "default"
+    ).trim();
+
+    if (!imagesByFacilitySection[fid]) imagesByFacilitySection[fid] = {};
+    if (!imagesByFacilitySection[fid][sec]) imagesByFacilitySection[fid][sec] = [];
+
+    // store ENTIRE IMAGE OBJECT (not just URL)
+    imagesByFacilitySection[fid][sec].push({ ...img });
   });
 
-  const features = [];
-  facilities.forEach(f => {
-    const fid = String(f.facility_id || f.id || f.FacilityID || f.Facility || f.facility || '').trim();
-    const lat = parseFloat(f.lat || f.latitude || f.Lat || f.Latitude || f.Latitude_dd || (f.lat_lng && f.lat_lng.split(',')[0]));
-    const lng = parseFloat(f.lng || f.lon || f.longitude || f.Lon || f.Longitude || (f.lat_lng && f.lat_lng.split(',')[1]));
-    if(Number.isNaN(lat) || Number.isNaN(lng)) return;
+  /* ---- Build GeoJSON Features ---- */
+  const features = facilities.map(f => {
+    const fid = String(
+      f.facility_id || f.FacilityID || f.id
+    ).trim();
 
-    const secs = (sectionsByFacility[fid] || []).map(s => {
-      const secName = s.section_name || s.section || s.sectionName || s.SectionName || 'default';
-      const secCopy = Object.assign({}, s);
-      secCopy.images = imagesByFacilitySection[fid] && imagesByFacilitySection[fid][secName] ? imagesByFacilitySection[fid][secName] : [];
-      return secCopy;
+    /* ---- Extract safe numeric coordinates ---- */
+    const lat = parseFloat(
+      (f.lat !== undefined && f.lat !== null && f.lat !== '') ? f.lat : (f.lat_lng && f.lat_lng.split(',')[0])
+    );
+    const lng = parseFloat(
+      (f.lng !== undefined && f.lng !== null && f.lng !== '') ? f.lng : (f.lat_lng && f.lat_lng.split(',')[1])
+    );
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+
+    /* ---- Build sections with images ---- */
+    const secList = (sectionsByFacility[fid] || []).map(sec => {
+      const secName =
+        sec.section_name ||
+        sec.section ||
+        sec.SectionName ||
+        "default";
+
+      return {
+        ...sec,
+        images: imagesByFacilitySection[fid]?.[secName] || []
+      };
     });
 
-    const props = Object.assign({}, f);
-    props.facility_id = fid;
-    props.sections = secs;
+    /* ---- FINAL consistent properties object ---- */
+    const props = {
+      facility_id: fid,
+      // prefer facility_name; fall back to other possible headers
+      facility_name: f.facility_name || f['facility name'] || f.FacilityName || f.facility || f.Facility || 'Unnamed',
+      amenity: f.amenity || '',
+      country: f.country || '',
+      address: f.address || f.Address || '',
+      lat,
+      lng,
+      // preserve all original keys so toggles can find them
+      ...f,
+      // attach processed sections
+      sections: secList
+    };
 
-    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: props });
-  });
+    return {
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [lng, lat]
+      },
+      properties: props
+    };
+  }).filter(Boolean);
 
-  return { type: 'FeatureCollection', features };
+  return {
+    type: "FeatureCollection",
+    features
+  };
 }
 
 /* ======================================================================
-   Map init (with glyphs) and main handlers
+   Initialize MapLibre map
    ====================================================================== */
 let currentPopup = null;
 const map = new maplibregl.Map({
   container: 'map',
-  style: { version: 8, glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources: { 'osm-tiles': { type: 'raster', tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256 } }, layers: [{ id:'osm-tiles', type:'raster', source:'osm-tiles' }] },
-  center: [0,20], zoom:2
+  style: {
+    version: 8,
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources: {
+      'osm-tiles': { type: 'raster', tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256 }
+    },
+    layers: [{ id:'osm-tiles', type:'raster', source:'osm-tiles' }]
+  },
+  center: [0,20],
+  zoom: 2
 });
 
-// centralized handler to open popup + flyTo
+/* ======================================================================
+   Centralized handler to open popup + flyTo (robust)
+   ====================================================================== */
 function handleMapFeatureClick(feature) {
-  if (!feature) return;
+  if(!feature) return;
 
   // Close previous popup
   if (currentPopup) {
@@ -200,30 +263,25 @@ function handleMapFeatureClick(feature) {
     currentPopup = null;
   }
 
-  // FIX: Normalize geometry (MapLibre sometimes stores it internally)
+  // Determine coordinates robustly
   let coords = null;
-
-  if (feature.geometry && feature.geometry.coordinates) {
-    coords = feature.geometry.coordinates;
-  } else if (feature._geometry && feature._geometry.coordinates) {
-    coords = feature._geometry.coordinates;
-  } else if (feature.properties.longitude && feature.properties.latitude) {
-    coords = [
-      parseFloat(feature.properties.longitude),
-      parseFloat(feature.properties.latitude)
-    ];
-  }
+  if (feature.geometry && feature.geometry.coordinates) coords = feature.geometry.coordinates;
+  else if (feature._geometry && feature._geometry.coordinates) coords = feature._geometry.coordinates;
+  else if (feature.properties && feature.properties.lng && feature.properties.lat) coords = [parseFloat(feature.properties.lng), parseFloat(feature.properties.lat)];
+  else if (feature.properties && feature.properties.longitude && feature.properties.latitude) coords = [parseFloat(feature.properties.longitude), parseFloat(feature.properties.latitude)];
 
   if (!coords) {
-    console.warn("No coordinates found for feature:", feature);
+    console.warn('No coordinates for feature', feature);
     return;
   }
 
-  // Fly to feature
+  // Fly there
   map.flyTo({ center: coords, zoom: 16 });
 
-  // Build popup
+  // Build popup content and show it
   const container = createFacilityPopupContent(feature);
+  // debug: ensure non-empty container
+  // console.log('popup container html', container && container.innerHTML);
 
   currentPopup = new maplibregl.Popup()
     .setLngLat(coords)
@@ -231,77 +289,79 @@ function handleMapFeatureClick(feature) {
     .addTo(map);
 }
 
+/* ======================================================================
+   Map load: fetch data and add source/layers (idempotent)
+   ====================================================================== */
 map.on('load', async () => {
-  const data = await loadData();
-  const geojson = buildFeatureCollection(data);
-  window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
+  try {
+    const data = await loadData();
+    const geojson = buildFeatureCollection(data);
+    window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
 
-  // --- SAFE SOURCE ADDITION ---
-if (!map.getSource('toilets')) {
-  map.addSource('toilets', {
-    type: 'geojson',
-    data: geojson,
-    cluster: false
-  });
-} else {
-  // source already exists → just update it
-  map.getSource('toilets').setData(geojson);
-}
-
-// --- SAFE LAYER ADDITION ---
-if (!map.getLayer('toilet-points')) {
-  map.addLayer({
-    id: 'toilet-points',
-    type: 'circle',
-    source: 'toilets',
-    paint: {
-      'circle-radius': 6,
-      'circle-color': '#1f78b4',
-      'circle-stroke-width': 1
+    // SAFE source add/update
+    if (!map.getSource('toilets')) {
+      map.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
+    } else {
+      map.getSource('toilets').setData(geojson);
     }
-  });
-}
 
-if (!map.getLayer('toilet-labels')) {
-  map.addLayer({
-    id: 'toilet-labels',
-    type: 'symbol',
-    source: 'toilets',
-    layout: {
-      'text-field': ['get', 'facility'],
-      'text-offset': [0, 1.2],
-      'text-size': 12
+    // SAFE layer add
+    if (!map.getLayer('toilet-points')) {
+      map.addLayer({
+        id: 'toilet-points',
+        type: 'circle',
+        source: 'toilets',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#1f78b4',
+          'circle-stroke-width': 1
+        }
+      });
     }
-  });
-}
 
-
-  buildFacilityList(geojson.features);
-  buildFacilityFilters(data.facilities, data.sections, data.images);
-  setupPropertyToggles({facilities:data.facilities, sections:data.sections, images:data.images});
-
-  // click handlers on both layers
-  map.on('click','toilet-points', e => {
-    const feature = e.features && e.features[0];
-    handleMapFeatureClick(feature);
-  });
-  map.on('click','toilet-labels', e => {
-    const feature = e.features && e.features[0];
-    handleMapFeatureClick(feature);
-  });
-
-  // fallback: if user clicks and event didn't capture layer feature (rare), query rendered features at point
-  map.on('click', (e) => {
-    // if e.features exists and had a feature we already handled; otherwise try queryRenderedFeatures
-    // query both layers so clicks on label or circle will be found
-    const hits = map.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
-    if(hits && hits.length) {
-      handleMapFeatureClick(hits[0]);
+    if (!map.getLayer('toilet-labels')) {
+      map.addLayer({
+        id: 'toilet-labels',
+        type: 'symbol',
+        source: 'toilets',
+        layout: {
+          'text-field': ['get', 'facility_name'],
+          'text-offset': [0, 1.2],
+          'text-size': 12,
+          'text-ignore-placement': false,
+          'text-allow-overlap': false
+        }
+      });
     }
-  });
 
-  map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
-  map.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
+    // Build sidebar and UI
+    buildFacilityList(geojson.features);
+    buildFacilityFilters(data.facilities, data.sections, data.images);
+    setupPropertyToggles({facilities:data.facilities, sections:data.sections, images:data.images});
+
+    // click handlers (both layers)
+    map.on('click','toilet-points', e => {
+      const feature = e.features && e.features[0];
+      handleMapFeatureClick(feature);
+    });
+    map.on('click','toilet-labels', e => {
+      const feature = e.features && e.features[0];
+      handleMapFeatureClick(feature);
+    });
+
+    // fallback: query features at click point
+    map.on('click', (e) => {
+      const hits = map.queryRenderedFeatures(e.point, { layers: ['toilet-points','toilet-labels'] });
+      if (hits && hits.length) handleMapFeatureClick(hits[0]);
+    });
+
+    map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
+    map.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
+
+  } catch(err) {
+    console.error('Boot failed', err);
+    document.getElementById('facilityList').textContent='Failed to load data. Check console.';
+  }
 });
 
 /* ======================================================================
@@ -311,22 +371,20 @@ function buildFacilityList(features){
   const list = document.getElementById('facilityList'); list.innerHTML = '';
   features.forEach(f => {
     const d = document.createElement('div'); d.className='facility-item';
-    const name = f.properties.facility || f.properties.Facility || f.properties.FacilityName || 'Unnamed';
+    const name = f.properties.facility_name || f.properties.facility || f.properties.FacilityName || 'Unnamed';
     const addr = f.properties.address || f.properties.Address || '';
     d.innerHTML = `<strong>${escapeHtml(name)}</strong><div class="small">${escapeHtml(addr)}</div>`;
     d.addEventListener('click', ()=>{
       if(currentPopup){ try{ currentPopup.remove(); }catch(e){} currentPopup=null; }
-      map.flyTo({ center: f.geometry.coordinates, zoom:16 });
-      const container = createFacilityPopupContent(f);
-      currentPopup = new maplibregl.Popup().setLngLat(f.geometry.coordinates).setDOMContent(container).addTo(map);
+      handleMapFeatureClick(f);
     });
     list.appendChild(d);
   });
 }
 
 /* ======================================================================
-   Property filter builder (collapsed). Exclude amenity & address.
-   Include values from sections/images for keys like access,type,image_taken
+   Property filter builder (collapsed).
+   Exclude amenity & address; include extra keys from sections/images.
    ====================================================================== */
 function buildFacilityFilters(facilities, sections, images){
   const container = document.getElementById('propertyFilter'); container.innerHTML='';
@@ -393,7 +451,7 @@ function applyFilters(){
     return true;
   });
   const fc = { type:'FeatureCollection', features: filtered };
-  map.getSource('toilets').setData(fc);
+  if(map.getSource('toilets')) map.getSource('toilets').setData(fc);
   buildFacilityList(filtered);
 }
 
@@ -453,8 +511,12 @@ function getVisibleProperties(){
    ====================================================================== */
 function createFacilityPopupContent(feature){
   const props = feature.properties || {};
-  const facilityName = props.facility || props.Facility || props.FacilityName || 'Unnamed';
-  const addr = props.address || '';
+
+  // ensure facility_id exists for later section lookup
+  props.facility_id = props.facility_id || props.FacilityID || props.id || props.ID || '';
+
+  const facilityName = props.facility_name || props.facility || props.FacilityName || 'Unnamed';
+  const addr = props.address || props.Address || '';
   const visible = getVisibleProperties();
 
   const container = document.createElement('div');
@@ -572,7 +634,7 @@ document.getElementById('closeModal').addEventListener('click', ()=>{ document.g
 function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;","<":"&lt;",">":"&gt;"}[c])); }
 
 /* ======================================================================
-   Boot: initial load and UI hookup
+   Boot: initial load and UI hookup (keeps idempotence)
    ====================================================================== */
 (async function(){
   try{
@@ -594,10 +656,3 @@ function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
