@@ -38,16 +38,12 @@
       <input id="searchInput" type="search" placeholder="Search facility, address or section" />
     </div>
 
-    <div class="filters">
-      <strong>Facility filters</strong>
-      <div id="facilityFilters">(loading...)</div>
-      <button id="clearFilters">Clear filters</button>
-    </div>
+    <div class="collapsible" id="propFilterBtn">Property Filter ▾</div>
+    <div id="propertyFilter" style="display:none;padding:6px 0 12px 0;" class="small">(filter by property values)</div>
 
     <div class="collapsible" id="propToggleBtn">Property visibility ▾</div>
     <div id="propertyToggles" class="toggle-list" style="display:none">
-      <!-- checkboxes get injected here after data loads -->
-      <div class="small">Toggle which facility-level properties appear in the popup.</div>
+      <div class="small">Toggle which properties appear in the facility popup and section modal.</div>
     </div>
 
     <div>
@@ -72,11 +68,9 @@
    ====================================================================== */
 const CONFIG = {
   SHEET_ID: '147YVLFKhpk7s0gtxBVb9w55icdTh3VRpsNpEP3ojesY',
-  // use the actual sheet TAB NAMES you confirmed
   FACILITIES_SHEET: 'Facilities',
   SECTIONS_SHEET: 'Sections',
   IMAGES_SHEET: 'Images',
-  // static JSON file paths (Option A)
   STATIC: {
     facilities: './data/facilities_static.json',
     sections: './data/sections_static.json',
@@ -93,7 +87,6 @@ async function fetchSheet(sheetName){
     const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq?tqx=out:json${sheetParam}`;
     const res = await fetch(url);
     const text = await res.text();
-    // extract JSON object from google's wrapper robustly
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if(start === -1 || end === -1) throw new Error('Unexpected Google response format');
@@ -116,7 +109,7 @@ function gvizToObjects(gv){
 }
 
 /* ======================================================================
-   Fetch static JSON files from /data and dynamic sheets, then merge
+   Load data (static + dynamic) and normalize
    ====================================================================== */
 async function loadData(){
   const [staticFacilities, staticSections, staticImages] = await Promise.all([
@@ -125,19 +118,13 @@ async function loadData(){
     fetch(CONFIG.STATIC.images).then(r=>r.json()).catch(_=>[])
   ]);
 
-  // dynamic (from Sheets) — keep small
   const [dynF, dynS, dynI] = await Promise.all([
     fetchSheet(CONFIG.FACILITIES_SHEET),
     fetchSheet(CONFIG.SECTIONS_SHEET),
     fetchSheet(CONFIG.IMAGES_SHEET)
   ]);
 
-  // unify key names: make sure facility id is facility_id string
-  const normalize = arr => arr.map(o => {
-    const copy = {};
-    Object.keys(o).forEach(k => { copy[k.trim()] = o[k]; });
-    return copy;
-  });
+  const normalize = arr => arr.map(o => { const copy = {}; Object.keys(o).forEach(k => { copy[k.trim()] = o[k]; }); return copy; });
 
   const facilities = [...normalize(staticFacilities), ...normalize(dynF)];
   const sections = [...normalize(staticSections), ...normalize(dynS)];
@@ -147,9 +134,7 @@ async function loadData(){
 }
 
 /* ======================================================================
-   Convert datasets into a GeoJSON FeatureCollection where each Feature
-   is a facility with an array of its sections (each section contains its
-   properties and images). This supports arbitrary section columns.
+   Build GeoJSON features: facility contains its sections (with images)
    ====================================================================== */
 function buildFeatureCollection({facilities, sections, images}){
   const sectionsByFacility = {};
@@ -157,7 +142,6 @@ function buildFeatureCollection({facilities, sections, images}){
     const fid = String(s.facility_id || s.facility || s.id || s.FacilityID || s.facilityId || '').trim();
     if(!fid) return;
     sectionsByFacility[fid] = sectionsByFacility[fid] || [];
-    // copy section and collect images later
     sectionsByFacility[fid].push(Object.assign({}, s));
   });
 
@@ -176,9 +160,8 @@ function buildFeatureCollection({facilities, sections, images}){
     const fid = String(f.facility_id || f.id || f.FacilityID || f.Facility || f.facility || '').trim();
     const lat = parseFloat(f.lat || f.latitude || f.Lat || f.Latitude || f.Latitude_dd || (f.lat_lng && f.lat_lng.split(',')[0]));
     const lng = parseFloat(f.lng || f.lon || f.longitude || f.Lon || f.Longitude || (f.lat_lng && f.lat_lng.split(',')[1]));
-    if(Number.isNaN(lat) || Number.isNaN(lng)) return; // skip invalid
+    if(Number.isNaN(lat) || Number.isNaN(lng)) return;
 
-    // attach sections with images and their properties
     const secs = (sectionsByFacility[fid] || []).map(s => {
       const secName = s.section_name || s.section || s.sectionName || s.SectionName || 'default';
       const secCopy = Object.assign({}, s);
@@ -186,70 +169,58 @@ function buildFeatureCollection({facilities, sections, images}){
       return secCopy;
     });
 
-    // collect facility properties (all columns except lat/lng)
     const props = Object.assign({}, f);
     props.facility_id = fid;
     props.sections = secs;
 
-    features.push({
-      type: 'Feature',
-      geometry: { type: 'Point', coordinates: [lng, lat] },
-      properties: props
-    });
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: props });
   });
 
   return { type: 'FeatureCollection', features };
 }
 
 /* ======================================================================
-   Initialize map (glyphs added to satisfy MapLibre text-field)
+   Map init (with glyphs) and main handlers
    ====================================================================== */
+let currentPopup = null;
 const map = new maplibregl.Map({
   container: 'map',
-  style: {
-    version: 8,
-    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-    sources: { 'osm-tiles': { type: 'raster', tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256 } },
-    layers: [{ id:'osm-tiles', type:'raster', source:'osm-tiles' }]
-  },
+  style: { version: 8, glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources: { 'osm-tiles': { type: 'raster', tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256 } }, layers: [{ id:'osm-tiles', type:'raster', source:'osm-tiles' }] },
   center: [0,20], zoom:2
 });
 
 map.on('load', async () => {
   const data = await loadData();
   const geojson = buildFeatureCollection(data);
-
-  // cache for filtering/search
   window.__MAP_DATA = { raw: geojson, facilities: data.facilities, sections: data.sections, images: data.images };
 
-  map.addSource('toilets', { type:'geojson', data: geojson });
-
-  map.addLayer({
-    id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 }
-  });
-
-  // label layer uses glyphs above
+  map.addSource('toilets', { type:'geojson', data: geojson, cluster: false });
+  map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
   map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
 
-  // set UI with loaded data
   buildFacilityList(geojson.features);
-  buildFacilityFilters(data.facilities);
-  setupPropertyToggles(data.facilities); // -> builds checkboxes for property visibility
+  buildFacilityFilters(data.facilities, data.sections, data.images);
+  setupPropertyToggles({facilities:data.facilities, sections:data.sections, images:data.images});
 
-  // click handler: zoom + show popup (same as clicking from sidebar)
+  // click handler with single-popup behavior
   map.on('click','toilet-points', e => {
-    const feature = e.features[0];
+    const feature = e.features && e.features[0];
     if(!feature) return;
-    // zoom to and show popup
+    // close previous popup
+    if(currentPopup) { try{ currentPopup.remove(); }catch(e){} currentPopup = null; }
     map.flyTo({ center: feature.geometry.coordinates, zoom: 16 });
-    showFacilityPopup(feature);
+    // create popup and store it
+    const container = createFacilityPopupContent(feature);
+    const popup = new maplibregl.Popup().setLngLat(feature.geometry.coordinates).setDOMContent(container).addTo(map);
+    currentPopup = popup;
   });
+
   map.on('mouseenter','toilet-points', ()=> map.getCanvas().style.cursor='pointer');
   map.on('mouseleave','toilet-points', ()=> map.getCanvas().style.cursor='');
 });
 
 /* ======================================================================
-   UI builders: list, filters
+   Facility list builder
    ====================================================================== */
 function buildFacilityList(features){
   const list = document.getElementById('facilityList'); list.innerHTML = '';
@@ -258,37 +229,62 @@ function buildFacilityList(features){
     const name = f.properties.facility || f.properties.Facility || f.properties.FacilityName || 'Unnamed';
     const addr = f.properties.address || f.properties.Address || '';
     d.innerHTML = `<strong>${escapeHtml(name)}</strong><div class="small">${escapeHtml(addr)}</div>`;
-    d.addEventListener('click', ()=>{ map.flyTo({ center: f.geometry.coordinates, zoom:16 }); showFacilityPopup(f); });
+    d.addEventListener('click', ()=>{
+      if(currentPopup){ try{ currentPopup.remove(); }catch(e){} currentPopup=null; }
+      map.flyTo({ center: f.geometry.coordinates, zoom:16 });
+      const container = createFacilityPopupContent(f);
+      currentPopup = new maplibregl.Popup().setLngLat(f.geometry.coordinates).setDOMContent(container).addTo(map);
+    });
     list.appendChild(d);
   });
 }
 
-// Build simple facility-level filters by enumerating unique values per column
-function buildFacilityFilters(facilities){
-  const container = document.getElementById('facilityFilters'); container.innerHTML='';
-  if(!facilities || !facilities.length){ container.textContent='(no facility data)'; return; }
+/* ======================================================================
+   Property filter builder (collapsed). Exclude amenity & address.
+   Include values from sections/images for keys like access,type,image_taken
+   ====================================================================== */
+function buildFacilityFilters(facilities, sections, images){
+  const container = document.getElementById('propertyFilter'); container.innerHTML='';
+  const exclude = new Set(['facility_id','id','lat','lng','latitude','longitude','lat_lng','amenity','address','Address','Facility','facility']);
 
-  // decide which columns to expose as filters: pick string columns except id/coords
-  const sample = facilities[0];
-  const exclude = new Set(['facility_id','id','lat','lng','lat_lng','latitude','longitude','FacilityID','Latitude','Longitude']);
+  // gather candidate keys from facilities
+  const sample = facilities[0] || {};
   const keys = Object.keys(sample).filter(k => !exclude.has(k));
 
+  // also include specific keys from sections/images
+  const extraKeys = ['access','type','image_taken','photo_taken','image_date'];
+  extraKeys.forEach(k=>{ if(!keys.includes(k)) keys.push(k); });
+
+  if(!keys.length){ container.textContent='(no filterable properties)'; return; }
+
+  // create collapsible UI
+  const wrapper = document.createElement('div');
   keys.forEach(k => {
-    // collect unique values (limit to 100 distinct)
+    // collect unique values from facilities + sections + images
     const vals = new Set();
-    facilities.forEach(f => { const v = f[k]; if(v!==null && v!==undefined && v!="") vals.add(String(v)); });
-    if(vals.size <= 1) return; // not useful
-    const sel = document.createElement('select'); sel.dataset.col = k;
-    const optAll = document.createElement('option'); optAll.value=''; optAll.textContent=`All ${k}`; sel.appendChild(optAll);
-    Array.from(vals).sort().forEach(v => { const o = document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); });
-    const lbl = document.createElement('label'); lbl.textContent = k; lbl.appendChild(sel);
-    container.appendChild(lbl);
+    facilities.forEach(f => { const v=f[k]; if(v!==null && v!==undefined && v!=='') vals.add(String(v)); });
+    sections.forEach(s => { const v=s[k] || s[k.toLowerCase()]; if(v!==null && v!==undefined && v!=='') vals.add(String(v)); });
+    images.forEach(i => { const v=i[k] || i[k.toLowerCase()]; if(v!==null && v!==undefined && v!=='') vals.add(String(v)); });
+    if(vals.size<=0) return;
+    const lbl = document.createElement('label');
+    lbl.innerHTML = `${escapeHtml(k)}<select data-col="${escapeHtml(k)}"><option value="">All</option></select>`;
+    const sel = lbl.querySelector('select');
+    Array.from(vals).sort().forEach(v => { const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); });
+    wrapper.appendChild(lbl);
     sel.addEventListener('change', applyFilters);
   });
+
+  container.appendChild(wrapper);
+
+  // collapse/expand
+  const btn = document.getElementById('propFilterBtn');
+  btn.addEventListener('click', ()=>{ container.style.display = container.style.display === 'none' ? 'block' : 'none'; });
+  // start collapsed
+  container.style.display = 'none';
 }
 
 function getActiveFilters(){
-  const selects = document.querySelectorAll('#facilityFilters select');
+  const selects = document.querySelectorAll('#propertyFilter select');
   const filters = {};
   selects.forEach(s => { if(s.value) filters[s.dataset.col]=s.value; });
   return filters;
@@ -299,7 +295,16 @@ function applyFilters(){
   const raw = window.__MAP_DATA.raw.features;
   const filtered = raw.filter(feat => {
     const props = feat.properties;
-    for(const k in filters){ if(String(props[k]||'') !== String(filters[k])) return false; }
+    for(const k in filters){
+      // check facility prop, then check sections/images
+      const v = String(props[k]||'');
+      if(v === String(filters[k])) continue;
+      // check sections
+      const secMatch = (props.sections||[]).some(s => String(s[k]||s[k.toLowerCase()]||'') === String(filters[k]));
+      if(secMatch) continue;
+      // no match
+      return false;
+    }
     return true;
   });
   const fc = { type:'FeatureCollection', features: filtered };
@@ -307,51 +312,42 @@ function applyFilters(){
   buildFacilityList(filtered);
 }
 
-document.getElementById('clearFilters').addEventListener('click', ()=>{ document.querySelectorAll('#facilityFilters select').forEach(s=>s.value=''); applyFilters(); });
-
 /* ======================================================================
-   Search (facility, address, or section name)
+   Property visibility toggles (gathers keys from facilities, sections, images)
    ====================================================================== */
-document.getElementById('searchInput').addEventListener('input', e => {
-  const q = e.target.value.trim().toLowerCase();
-  const raw = window.__MAP_DATA.raw.features;
-  if(!q){ map.getSource('toilets').setData(window.__MAP_DATA.raw); buildFacilityList(raw); return; }
-  const matched = raw.filter(f => {
-    const name = String(f.properties.facility || '').toLowerCase();
-    const addr = String(f.properties.address || '').toLowerCase();
-    const secMatch = (f.properties.sections||[]).some(s => String(s.section_name||s.section||'').toLowerCase().includes(q));
-    return name.includes(q) || addr.includes(q) || secMatch;
-  });
-  map.getSource('toilets').setData({ type:'FeatureCollection', features: matched });
-  buildFacilityList(matched);
-});
+const DEFAULT_VISIBLE = ['amenity','country','description'];
+function setupPropertyToggles(data){
+  const container = document.getElementById('propertyToggles'); container.innerHTML='';
+  const facilities = data.facilities || [];
+  const sections = data.sections || [];
+  const images = data.images || [];
+  if(!facilities.length){ container.innerHTML='<div class="small">(no properties)</div>'; return; }
 
-/* ======================================================================
-   Property visibility toggles
-   ====================================================================== */
-const DEFAULT_VISIBLE = ['amenity','floor','access','type','description','image_taken'];
+  const ex = new Set(['facility_id','id','lat','lng','latitude','longitude','lat_lng','sections','SectionID','FacilityID']);
 
-function setupPropertyToggles(facilities){
-  const container = document.getElementById('propertyToggles');
-  container.innerHTML = '';
-  if(!facilities || !facilities.length){ container.innerHTML = '<div class="small">(no properties found)</div>'; return; }
+  const facKeys = Object.keys(facilities[0]).filter(k => !ex.has(k));
+  const secKeys = Object.keys(sections[0]||{}).filter(k => !ex.has(k));
+  const imgKeys = Object.keys(images[0]||{}).filter(k => !ex.has(k));
 
-  // determine candidate property keys from facilities dataset (exclude obvious technical columns)
-  const exclude = new Set(['facility_id','id','lat','lng','lat_lng','latitude','longitude','FacilityID','Latitude','Longitude','facility','Facility','address','Address','sections']);
-  const sample = facilities[0];
-  const keys = Object.keys(sample).filter(k => !exclude.has(k));
+  // Helper to build group
+  function buildGroup(title, keys, source){
+    const h = document.createElement('div');
+    h.innerHTML = `<strong>${escapeHtml(title)}</strong>`;
+    container.appendChild(h);
+    keys.forEach(k => {
+      const id = `${source}_prop_` + k.replace(/[^a-z0-9_\-]/gi,'_');
+      const checked = DEFAULT_VISIBLE.includes(k.toLowerCase()) || (source==='image' && ['image_taken','image_date','photo_taken'].includes(k.toLowerCase())) ? 'checked' : '';
+      const div = document.createElement('div');
+      div.innerHTML = `<input type="checkbox" id="${id}" data-prop="${escapeHtml(k)}" data-source="${source}" ${checked}><label for="${id}">${escapeHtml(k)}</label>`;
+      container.appendChild(div);
+    });
+  }
 
-  // build checkboxes (default checked if in DEFAULT_VISIBLE, case-insensitive)
-  const lowerDefaults = DEFAULT_VISIBLE.map(s => s.toLowerCase());
-  keys.forEach(k => {
-    const id = 'prop_' + k.replace(/[^a-z0-9_\-]/gi,'_');
-    const checked = lowerDefaults.includes(k.toLowerCase()) ? 'checked' : '';
-    const div = document.createElement('div');
-    div.innerHTML = `<input type="checkbox" id="${id}" data-prop="${escapeHtml(k)}" ${checked}><label for="${id}">${escapeHtml(k)}</label>`;
-    container.appendChild(div);
-  });
+  if(facKeys.length) buildGroup('Facility properties', facKeys, 'facility');
+  if(secKeys.length) buildGroup('Section properties', secKeys, 'section');
+  if(imgKeys.length) buildGroup('Image properties', imgKeys, 'image');
 
-  // show/hide toggle behavior
+  // toggle collapse
   const btn = document.getElementById('propToggleBtn');
   btn.addEventListener('click', () => {
     const el = document.getElementById('propertyToggles');
@@ -361,34 +357,33 @@ function setupPropertyToggles(facilities){
 
 function getVisibleProperties(){
   const checks = Array.from(document.querySelectorAll('#propertyToggles input[type=checkbox]'));
-  if(!checks.length) return []; // nothing toggled
-  return checks.filter(c => c.checked).map(c => c.dataset.prop);
+  const out = { facility: [], section: [], image: [] };
+  checks.forEach(c => { if(c.checked){ const s = c.dataset.source || 'facility'; out[s].push(c.dataset.prop); } });
+  return out;
 }
 
 /* ======================================================================
-   Popup & modal: facility popup lists selected properties and sections
-   Section modal shows section properties, description, and gallery
+   Facility popup builder (returns DOM container). Does NOT directly add popup
+   so caller can control opening/closing and store the popup object.
    ====================================================================== */
-function showFacilityPopup(feature){
+function createFacilityPopupContent(feature){
   const props = feature.properties || {};
   const facilityName = props.facility || props.Facility || props.FacilityName || 'Unnamed';
   const addr = props.address || '';
-
-  const visibleProps = getVisibleProperties();
+  const visible = getVisibleProperties();
 
   const container = document.createElement('div');
   let html = '';
   html += `<strong>${escapeHtml(facilityName)}</strong>`;
   if(addr) html += `<div class="small">${escapeHtml(addr)}</div>`;
 
-  // properties table: list all facility-level columns except sections, but only those toggled visible
+  // facility properties
   html += `<table class="props">`;
   Object.keys(props).forEach(k => {
     if(['lat','lng','latitude','longitude','lat_lng','sections','facility_id','FacilityID'].includes(k)) return;
-    if(visibleProps.length && visibleProps.indexOf(k) === -1) return; // skip if not visible
+    if(visible.facility.length && visible.facility.indexOf(k) === -1) return;
     const v = props[k];
-    if(v===null || v===undefined || v==='') return;
-    // if property is an array (e.g., tags) stringify
+    if(v===null||v===undefined||v==='') return;
     const val = Array.isArray(v) ? v.join(', ') : String(v);
     html += `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(val)}</td></tr>`;
   });
@@ -407,7 +402,7 @@ function showFacilityPopup(feature){
 
   container.innerHTML = html;
 
-  // attach handlers for section links
+  // attach handlers
   container.querySelectorAll('.sec-link').forEach(a => {
     a.addEventListener('click', e => {
       e.preventDefault();
@@ -417,25 +412,31 @@ function showFacilityPopup(feature){
     });
   });
 
-  new maplibregl.Popup().setLngLat(feature.geometry.coordinates).setDOMContent(container).addTo(map);
+  return container;
 }
 
+/* ======================================================================
+   Section modal: shows section properties, image-level properties and gallery
+   ====================================================================== */
 function openSectionModal(facilityId, sectionName){
   const modal = document.getElementById('modal');
   const body = document.getElementById('modalBody');
   const data = window.__MAP_DATA;
   const facility = data.facilities.find(f => String(f.facility_id||f.id||f.FacilityID||f.facility||f.Facility) === String(facilityId));
   const section = data.sections.find(s => String(s.facility_id||s.facility||s.id||s.SectionID) === String(facilityId) && String(s.section_name||s.section||s.sectionName||s.SectionName) === String(sectionName));
+  const imgs = data.images.filter(i => String(i.facility_id||i.facility||i.id||i.FacilityID) === String(facilityId) && String(i.section_name||i.section||i.sectionName||i.SectionName||'') === String(sectionName));
+  const visible = getVisibleProperties();
 
   let html = '';
   html += `<h3>${escapeHtml(sectionName)}</h3>`;
   if(section && (section.description || section.Description)) html += `<p>${escapeHtml(section.description || section.Description)}</p>`;
 
-  // Show section properties table (all columns except facility_id and section_name)
+  // section properties
   if(section){
     html += `<table class="props">`;
     Object.keys(section).forEach(k => {
       if(['facility_id','section_name','section','id','image_url','SectionID'].includes(k)) return;
+      if(visible.section.length && visible.section.indexOf(k) === -1) return;
       const v = section[k];
       if(v===null||v===undefined||v==='') return;
       html += `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`;
@@ -443,11 +444,32 @@ function openSectionModal(facilityId, sectionName){
     html += `</table>`;
   }
 
-  // images (gather images from images dataset by facility+section)
-  const imgs = data.images.filter(i => String(i.facility_id||i.facility||i.id||i.FacilityID) === String(facilityId) && String(i.section_name||i.section||i.sectionName||i.SectionName||'') === String(sectionName)).map(i=>i.image_url || i.URL).filter(Boolean);
+  // image-level aggregated properties (e.g., image_taken)
+  if(imgs.length){
+    const imgProps = visible.image.length ? visible.image : ['image_taken','image_date','photo_taken','URL'];
+    // collect unique values per prop
+    const aggregates = {};
+    imgProps.forEach(p => { aggregates[p] = new Set(); });
+    imgs.forEach(img => {
+      imgProps.forEach(p => {
+        const val = img[p] || img[p.toLowerCase()] || img[p.toUpperCase()];
+        if(val!==null && val!==undefined && val!=='') aggregates[p].add(String(val));
+      });
+    });
+    // render table of image-level props
+    html += `<table class="props">`;
+    Object.keys(aggregates).forEach(p => {
+      const vals = Array.from(aggregates[p]);
+      if(!vals.length) return;
+      html += `<tr><th>${escapeHtml(p)}</th><td>${escapeHtml(vals.join(', '))}</td></tr>`;
+    });
+    html += `</table>`;
+  }
+
+  // gallery
   if(imgs.length){
     html += `<div class="gallery">`;
-    imgs.forEach(u => { html += `<img src="${escapeHtml(u)}" alt=""/>`; });
+    imgs.forEach(u => { const src = u.image_url || u.URL || u.url; html += `<img src="${escapeHtml(src)}" alt=""/>`; });
     html += `</div>`;
   } else {
     html += `<div class="small">No images found for this section.</div>`;
@@ -462,41 +484,27 @@ document.getElementById('closeModal').addEventListener('click', ()=>{ document.g
 /* ======================================================================
    Helpers
    ====================================================================== */
-function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;",'<':'&lt;','>':'&gt;'}[c])); }
+function escapeHtml(s){ if(s===null||s===undefined) return ''; return String(s).replace(/[&"'<>]/g, c=>({'&':'&amp;','"':'&quot;',"'":"&#39;","<":"&lt;",">":"&gt;"}[c])); }
 
 /* ======================================================================
-   Boot
+   Boot: initial load and UI hookup
    ====================================================================== */
 (async function(){
   try{
-    // load static + dynamic and render map features/UI
     const dataRaw = await loadData();
     const geojson = buildFeatureCollection(dataRaw);
-
-    // store for UI usage
     window.__MAP_DATA = { raw: geojson, facilities: dataRaw.facilities, sections: dataRaw.sections, images: dataRaw.images };
 
-    // set source (if not already present)
     if(map.getSource('toilets')) map.getSource('toilets').setData(geojson);
     else map.addSource('toilets', { type:'geojson', data: geojson });
 
-    // ensure layers exist (they may have been added in map.on('load'))
-    if(!map.getLayer('toilet-points')) {
-      map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
-    }
-    if(!map.getLayer('toilet-labels')) {
-      map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
-    }
+    if(!map.getLayer('toilet-points')) map.addLayer({ id: 'toilet-points', type:'circle', source:'toilets', paint: { 'circle-radius':6, 'circle-color':'#1f78b4', 'circle-stroke-width':1 } });
+    if(!map.getLayer('toilet-labels')) map.addLayer({ id:'toilet-labels', type:'symbol', source:'toilets', layout:{ 'text-field':['get','facility'] , 'text-offset':[0,1.2], 'text-size':12 } });
 
-    // build UI (in case not built earlier)
     buildFacilityList(geojson.features);
-    buildFacilityFilters(dataRaw.facilities);
-    setupPropertyToggles(dataRaw.facilities);
-
-  } catch(err){
-    console.error('Boot failed', err);
-    document.getElementById('facilityList').textContent = 'Failed to load data. Check console for errors.';
-  }
+    buildFacilityFilters(dataRaw.facilities, dataRaw.sections, dataRaw.images);
+    setupPropertyToggles({facilities:dataRaw.facilities, sections:dataRaw.sections, images:dataRaw.images});
+  } catch(err){ console.error('Boot failed', err); document.getElementById('facilityList').textContent='Failed to load data. Check console.'; }
 })();
 </script>
 </body>
